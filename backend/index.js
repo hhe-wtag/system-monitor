@@ -1,14 +1,24 @@
-import { createServer } from "http";
+import { createServer } from 'http'
+import { readFile } from 'fs/promises'
+import { join } from 'path'
+import { fileURLToPath } from 'url'
+const PORT = 8080
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = join(__filename, '..')
+const FRONTEND_PATH = join(__dirname, '..', 'frontend', 'index.html')
 
-const server = createServer((req, res) => {
-  const url = req.url;
-  if (url === "/") {
-    res.writeHead(200, { "Content-Type": "text/html" });
-    res.write("<h1>Hello, The server is up and running!</h1>");
-    res.end();
+const server = createServer(async (req, res) => {
+  if (req.url === '/') {
+    const html = await readFile(FRONTEND_PATH, 'utf-8')
+    res.writeHead(200, { 'Content-Type': 'text/html' })
+    res.end(html)
+  } else {
+    res.writeHead(404)
+    res.end('Not found')
   }
-});
-
-server.listen(8000, () => {
-  console.log("Server is listening on port: 8000");
-});
+})
+// Start server
+server.listen(PORT, () => {
+  console.log(`Server running on http://localhost:${PORT}`)
+  console.log(`Frontend path: ${FRONTEND_PATH}`)
+})
