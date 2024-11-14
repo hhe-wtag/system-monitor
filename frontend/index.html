@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>System Monitor</title>
+  </head>
+  <body>
+    <div id="heading">
+      <h1 id="title">System Monitor</h1>
+      <div id="connection-status">Connecting...</div>
+    </div>
+
+    <script>
+      const ws = new WebSocket('ws://localhost:8080')
+      const statusElement = document.getElementById('connection-status')
+      ws.onopen = () => {
+        statusElement.textContent = 'Connected'
+        statusElement.className = 'connected'
+        initCPUChart()
+        initMemoryChart()
+      }
+
+      ws.onclose = () => {
+        statusElement.textContent = 'Disconnected'
+        statusElement.className = 'disconnected'
+      }
+
+      ws.onerror = (error) => {
+        console.error('WebSocket error:', error)
+        statusElement.textContent = 'Error'
+        statusElement.className = 'disconnected'
+      }
+
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data)
+          console.log(event.data)
+        } catch (error) {
+          console.error('Error processing message:', error)
+        }
+      }
+    </script>
+  </body>
+</html>
