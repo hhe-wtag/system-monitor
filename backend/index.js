@@ -1,5 +1,6 @@
 import { createServer } from 'http'
 import { readFile } from 'fs/promises'
+import { cpus, totalmem, freemem, networkInterfaces } from 'os'
 import WebSocket, { WebSocketServer } from 'ws'
 import { join } from 'path'
 import { fileURLToPath } from 'url'
@@ -30,10 +31,74 @@ wss.on('connection', (ws) => {
     console.log('Client disconnected')
   })
 })
+
+async function getCPUUsage() {
+  const start = cpus().map((cpu) => cpu.times)
+  await new Promise((resolve) => setTimeout(resolve, 100))
+  const end = cpus().map((cpu) => cpu.times)
+
+  return end.map((cpu, i) => {
+    const startTimes = start[i]
+    const endTimes = cpu
+
+    const idle = endTimes.idle - startTimes.idle
+    const total = Object.keys(endTimes).reduce(
+      (acc, key) => acc + (endTimes[key] - startTimes[key]),
+      0
+    )
+
+    return {
+      core: i,
+      usage: Math.min(100, Math.max(0, (1 - idle / total) * 100))
+    }
+  })
+}
+
+async function getMemoryInfo() {
+  const total = totalmem()
+  const free = freemem()
+  const used = total - free
+
+  return {
+    total: formatBytes(total),
+    free: formatBytes(free),
+    used: formatBytes(used),
+    percentage: ((used / total) * 100).toFixed(1)
+  }
+}
+
+async function getNetworkStats() {
+  const interfaces = networkInterfaces()
+  return Object.entries(interfaces).map(([name, data]) => ({
+    name,
+    addresses: data.map((addr) => ({
+      address: addr.address,
+      family: addr.family,
+      internal: addr.internal
+    }))
+  }))
+}
+
+function formatBytes(bytes) {
+  const units = ['B', 'KB', 'MB', 'GB', 'TB']
+  let size = bytes
+  let unitIndex = 0
+
+  while (size >= 1024 && unitIndex < units.length - 1) {
+    size /= 1024
+    unitIndex++
+  }
+
+  return `${size.toFixed(2)} ${units[unitIndex]}`
+}
+
 async function sendMetrics(ws) {
   try {
     const metrics = {
       timestamp: new Date().toISOString(),
+      cpu: await getCPUUsage(),
+      memory: await getMemoryInfo(),
+      network: await getNetworkStats()
     }
 
     if (ws.readyState === WebSocket.OPEN) {
