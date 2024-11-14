@@ -1,9 +1,12 @@
 import { createServer } from 'http'
 import { readFile } from 'fs/promises'
 import { cpus, totalmem, freemem, networkInterfaces } from 'os'
+import { exec } from 'child_process'
+import { promisify } from 'util'
 import WebSocket, { WebSocketServer } from 'ws'
 import { join } from 'path'
 import { fileURLToPath } from 'url'
+const execAsync = promisify(exec)
 const PORT = 8080
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = join(__filename, '..')
@@ -79,6 +82,62 @@ async function getNetworkStats() {
   }))
 }
 
+async function getTopProcesses() {
+  try {
+    let cmd
+    switch (process.platform) {
+      case 'win32':
+        cmd = `powershell "Get-Process | Sort-Object CPU -Descending | Select-Object -First 5 | ForEach-Object {
+                    $proc = $_
+                    [PSCustomObject]@{
+                        Name = $proc.ProcessName
+                        PID = $proc.Id
+                        CPU = if ($proc.CPU) { [math]::Round($proc.CPU, 1) } else { 0 }
+                        Memory = [math]::Round($proc.WorkingSet64 / 1MB, 1)
+                    } | ConvertTo-Json
+                }"`
+        break
+
+      case 'linux':
+        cmd = `top -b -n 1 -o %CPU | head -n 12 | tail -n 5 | awk '{printf "{\\"pid\\":\\"%s\\",\\"cmd\\":\\"%s\\",\\"cpu\\":\\"%s\\",\\"mem\\":\\"%s\\"}\\n", $1, $12, $9, $10}'`
+        break
+
+      case 'darwin':
+        cmd = 'ps -arcwwwxo pid,command,%cpu,%mem | head -n 6'
+        break
+
+      default:
+        throw new Error(`Unsupported platform: ${process.platform}`)
+    }
+
+    const { stdout } = await execAsync(cmd)
+
+    return stdout
+      .split('\n')
+      .slice(1) 
+      .filter(Boolean)
+      .map((line) => {
+        const match = line
+          .trim()
+          .match(/^\s*(\d+)\s+(.+?)\s+(\d+\.\d+)\s+(\d+\.\d+)\s*$/)
+        if (match) {
+          const [_, pid, cmd, cpu, mem] = match
+          return {
+            pid,
+            cmd: cmd.trim(),
+            cpu: `${parseFloat(cpu).toFixed(1)}%`,
+            mem: `${parseFloat(mem).toFixed(1)}%`
+          }
+        }
+        return null
+      })
+      .filter(Boolean) 
+  } catch (error) {
+    console.error('Error getting processes:', error)
+    return []
+  }
+}
+
 function formatBytes(bytes) {
   const units = ['B', 'KB', 'MB', 'GB', 'TB']
   let size = bytes
@@ -98,7 +157,8 @@ async function sendMetrics(ws) {
       timestamp: new Date().toISOString(),
       cpu: await getCPUUsage(),
       memory: await getMemoryInfo(),
-      network: await getNetworkStats()
+      network: await getNetworkStats(),
+      processes: await getTopProcesses()
     }
 
     if (ws.readyState === WebSocket.OPEN) {
