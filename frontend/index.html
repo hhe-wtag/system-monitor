@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>System Monitor</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.7.0/chart.min.js"></script>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        margin: 20px;
+        background-color: #f0f2f5;
+      }
+      #heading {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+      .dashboard {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(300px, 1fr));
+        gap: 20px;
+        margin-bottom: 20px;
+      }
+      .card {
+        height: 350px;
+        background: white;
+        padding: 20px;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        overflow-y: auto;
+      }
+      .card h2 {
+        margin-top: 0;
+        color: #333;
+      }
+      .cpu-container {
+        display: flex;
+        flex-direction: column;
+        height: calc(100% - 40px); /* Account for h2 height */
+        margin: 20px;
+      }
+      .chart-container {
+        flex: 1;
+        min-height: 200px;
+        position: relative;
+      }
+      .stats-container {
+        margin-top: 15px;
+        padding: 15px 0px;
+        border-top: 1px solid #eee;
+      }
+      #cpuStats {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 10px;
+      }
+      .cpu-stat {
+        display: flex;
+        align-items: center;
+        font-size: 12px;
+      }
+      .cpu-bar {
+        flex-grow: 1;
+        height: 8px;
+        background: #e0e0e0;
+        border-radius: 4px;
+        margin: 0 10px;
+        overflow: hidden;
+      }
+      .cpu-usage {
+        height: 100%;
+        background: linear-gradient(90deg, #2196f3, #64b5f6);
+        transition: width 0.3s ease;
+      }
+      .cpu-label {
+        min-width: 44px;
+      }
+      .cpu-value {
+        width: 30px;
+        text-align: right;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+      th,
+      p,
+      td {
+        font-size: 14px;
+      }
+      td {
+        padding: 8px;
+        text-align: left;
+        border-bottom: 1px solid #ddd;
+      }
+      th {
+        background-color: #f8f9fa;
+      }
+      #connection-status {
+        padding: 8px 16px;
+        border-radius: 20px;
+        font-weight: bold;
+      }
+      .connected {
+        background-color: #d4edda;
+        color: #155724;
+      }
+      .disconnected {
+        background-color: #f8d7da;
+        color: #721c24;
+      }
+      .memory-container {
+        display: flex;
+        flex-direction: column;
+        height: calc(100% - 40px);
+        margin: 20px;
+      }
+      .memory-stats {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 10px;
+        margin-top: 15px;
+        padding: 15px 0px;
+        border-top: 1px solid #eee;
+      }
+      .memory-stat {
+        text-align: center;
+        padding: 10px;
+        background: #f8f9fa;
+        border-radius: 4px;
+      }
+      .memory-stat-label {
+        font-size: 12px;
+        color: #666;
+      }
+      .memory-stat-value {
+        font-size: 14px;
+        font-weight: bold;
+        color: #333;
+        margin-top: 5px;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="heading">
+      <h1 id="title">System Monitor</h1>
+      <div id="connection-status">Connecting...</div>
+    </div>
+
+    <div class="dashboard">
+      <div class="card">
+        <h2>CPU Usage</h2>
+        <div class="cpu-container">
+          <div class="chart-container">
+            <canvas id="cpuChart"></canvas>
+          </div>
+          <div id="cpuStats" class="stats-container"></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Memory Usage</h2>
+        <div class="memory-container">
+          <div class="chart-container">
+            <canvas id="memoryChart"></canvas>
+          </div>
+          <div class="memory-stats">
+            <div class="memory-stat">
+              <div class="memory-stat-label">Total</div>
+              <div class="memory-stat-value" id="memTotal"></div>
+            </div>
+            <div class="memory-stat">
+              <div class="memory-stat-label">Used</div>
+              <div class="memory-stat-value" id="memUsed"></div>
+            </div>
+            <div class="memory-stat">
+              <div class="memory-stat-label">Free</div>
+              <div class="memory-stat-value" id="memFree"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Top Processes</h2>
+        <table id="processTable">
+          <thead>
+            <tr>
+              <th>PID</th>
+              <th>Command</th>
+              <th>CPU</th>
+              <th>Memory</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div class="card">
+        <h2>Network Interfaces</h2>
+        <div id="networkInfo"></div>
+      </div>
+    </div>
+
+    <script>
+      let cpuChart, memoryChart
+      const ws = new WebSocket('ws://localhost:8080')
+      const statusElement = document.getElementById('connection-status')
+
+      // Initialize Memory Chart
+      const initMemoryChart = () => {
+        const ctx = document.getElementById('memoryChart').getContext('2d')
+        memoryChart = new Chart(ctx, {
+          type: 'line',
+          data: {
+            labels: [],
+            datasets: [
+              {
+                label: 'Memory Usage %',
+                data: [],
+                borderColor: 'rgba(75, 192, 192, 1)',
+                backgroundColor: 'rgba(75, 192, 192, 0.2)',
+                borderWidth: 2,
+                fill: true,
+                tension: 0.4
+              }
+            ]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+              y: {
+                beginAtZero: true,
+                max: 100,
+                title: {
+                  display: true,
+                  text: 'Usage %'
+                }
+              },
+              x: {
+                title: {
+                  display: true,
+                  text: 'Time'
+                }
+              }
+            },
+            animation: {
+              duration: 750
+            }
+          }
+        })
+      }
+
+      // Update memory chart
+      const updateMemoryChart = (memoryData) => {
+        const timestamp = new Date().toLocaleTimeString()
+
+        // Keep last 20 data points
+        if (memoryChart.data.labels.length > 20) {
+          memoryChart.data.labels.shift()
+          memoryChart.data.datasets[0].data.shift()
+        }
+
+        memoryChart.data.labels.push(timestamp)
+        memoryChart.data.datasets[0].data.push(memoryData.percentage)
+        memoryChart.update()
+
+        // Update stats
+        document.getElementById('memTotal').textContent = memoryData.total
+        document.getElementById(
+          'memUsed'
+        ).textContent = `${memoryData.used} (${memoryData.percentage}%)`
+        document.getElementById('memFree').textContent = memoryData.free
+      }
+
+      // Initialize CPU Chart
+      const initCPUChart = () => {
+        const ctx = document.getElementById('cpuChart').getContext('2d')
+        cpuChart = new Chart(ctx, {
+          type: 'bar',
+          data: {
+            labels: [],
+            datasets: [
+              {
+                label: 'CPU Usage %',
+                data: [],
+                backgroundColor: 'rgba(54, 162, 235, 0.5)',
+                borderColor: 'rgba(54, 162, 235, 1)',
+                borderWidth: 1
+              }
+            ]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+              y: {
+                beginAtZero: true,
+                max: 100
+              }
+            }
+          }
+        })
+      }
+
+      // Update CPU stats
+      const updateCPUStats = (cpuData) => {
+        const statsHtml = cpuData
+          .map(
+            (core) => `
+          <div class="cpu-stat">
+            <span class="cpu-label">Core ${core.core + 1}</span>
+            <div class="cpu-bar">
+              <div class="cpu-usage" style="width: ${core.usage}%"></div>
+            </div>
+            <span class="cpu-value">${core.usage.toFixed(1)}%</span>
+          </div>
+        `
+          )
+          .join('')
+        document.getElementById('cpuStats').innerHTML = statsHtml
+      }
+
+      // Update memory info
+      const updateMemoryInfo = (memoryData) => {
+        document.getElementById('memoryInfo').innerHTML = `
+          <p>Total: ${memoryData.total}</p>
+          <p>Used: ${memoryData.used} (${memoryData.percentage}%)</p>
+          <p>Free: ${memoryData.free}</p>
+        `
+      }
+
+      // Update process table
+      const updateProcessTable = (processes) => {
+        const tbody = document.querySelector('#processTable tbody')
+        tbody.innerHTML = processes
+          .map(
+            (proc) => `
+          <tr>
+            <td>${proc.pid}</td>
+            <td>${proc.cmd}</td>
+            <td>${proc.cpu}</td>
+            <td>${proc.mem}</td>
+          </tr>
+        `
+          )
+          .join('')
+      }
+
+      // Update network info
+      const updateNetworkInfo = (networkData) => {
+        document.getElementById('networkInfo').innerHTML = networkData
+          .map(
+            (iface) => `
+          <p style="margin-bottom: 10px;">
+            <strong>${iface.name}</strong><br>
+            ${iface.addresses
+              .map(
+                (addr) => `
+              ${addr.address} (${addr.family})
+              ${addr.internal ? '(internal)' : '(external)'}
+            `
+              )
+              .join('<br>')}
+          </p>
+        `
+          )
+          .join('')
+      }
+
+      // WebSocket event handlers
+      ws.onopen = () => {
+        statusElement.textContent = 'Connected'
+        statusElement.className = 'connected'
+        initCPUChart()
+        initMemoryChart()
+      }
+
+      ws.onclose = () => {
+        statusElement.textContent = 'Disconnected'
+        statusElement.className = 'disconnected'
+      }
+
+      ws.onerror = (error) => {
+        console.error('WebSocket error:', error)
+        statusElement.textContent = 'Error'
+        statusElement.className = 'disconnected'
+      }
+
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data)
+          
+          cpuChart.data.labels = data.cpu.map((core) => `Core ${core.core}`)
+          cpuChart.data.datasets[0].data = data.cpu.map((core) => core.usage)
+          cpuChart.update()
+
+          updateCPUStats(data.cpu)
+          updateMemoryChart(data.memory)
+          updateProcessTable(data.processes)
+          updateNetworkInfo(data.network)
+        } catch (error) {
+          console.error('Error processing message:', error)
+        }
+      }
+    </script>
+  </body>
+</html>
